@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Pixel Run Online</title>
+<style>
+html,body{margin:0;height:100%;background:#1a1c2c;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;font-family:monospace}
+#g{position:absolute;left:50%;top:0;transform:translateX(-50%);image-rendering:pixelated}
+#ui{position:fixed;left:0;right:0;bottom:0;display:none;justify-content:space-between;padding:12px 16px calc(14px + env(safe-area-inset-bottom));pointer-events:none}
+#ui div{display:flex;gap:12px}
+.b{pointer-events:auto;width:76px;height:76px;border-radius:14px;background:rgba(255,255,255,.22);border:3px solid rgba(255,255,255,.65);color:#fff;font:bold 30px monospace;display:flex;align-items:center;justify-content:center}
+.b.on{background:rgba(255,255,255,.55)}
+#ov{position:fixed;inset:0;background:#1a1c2cf2;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:20px}
+#ov h1{margin:0;font-size:34px;color:#ffd23f;text-shadow:3px 3px #b13e53}
+#ov p{margin:0;color:#c8d0e0;max-width:320px;line-height:1.5}
+#ov input,#ov button{font:bold 18px monospace;padding:12px 16px;border:3px solid #fff;background:#333c57;color:#fff;border-radius:0;text-align:center}
+#ov button{background:#38b764;cursor:pointer}
+#ov button:focus-visible,#ov input:focus-visible{outline:3px solid #ffd23f}
+</style></head><body>
+<canvas id="g"></canvas>
+<div id="ui"><div><span class="b" id="bl">◀</span><span class="b" id="br">▶</span></div><div><span class="b" id="bj">▲</span></div></div>
+<div id="ov"><h1>PIXEL RUN</h1>
+<p>Lompati jurang, kumpulkan koin lebih banyak dari pemain lain. Koin muncul lagi setelah 8 detik.</p>
+<input id="nm" maxlength="12" placeholder="Nama kamu" autocomplete="off">
+<button id="go">Main</button>
+<p>Laptop: ← → / A D, lompat dengan spasi atau ↑.<br>HP: tombol di layar.</p></div>
+<script>
+const W=320,H=180,T=16,cv=document.getElementById('g'),c=cv.getContext('2d');
+cv.width=W;cv.height=H;
+let rows,coins,MW,MH,me,myId=null,myH=200,ws,joined=false;
+const others=new Map(),taken=new Set(),sent={},K={},TC={l:0,r:0,j:0};
+let board=[],connected=false,cam=0,tick=0;
+
+function fit(){let s=Math.min(innerWidth/W,innerHeight/H);if(s>=2)s=Math.floor(s);cv.style.width=W*s+'px';cv.style.height=H*s+'px'}
+addEventListener('resize',fit);fit();
+if(matchMedia('(pointer:coarse)').matches)document.getElementById('ui').style.display='flex';
+
+addEventListener('keydown',e=>{K[e.code]=1;if(['Space','ArrowUp','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault()});
+addEventListener('keyup',e=>K[e.code]=0);
+[['bl','l'],['br','r'],['bj','j']].forEach(([id,k])=>{
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);TC[k]=1;el.classList.add('on')});
+  ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>el.addEventListener(ev,()=>{TC[k]=0;el.classList.remove('on')}));
+});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+function connect(){
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
+  ws.onopen=()=>{connected=true;if(joined)ws.send(JSON.stringify({t:'j',n:nm.value}))};
+  ws.onclose=()=>{connected=false;others.clear();setTimeout(connect,2000)};
+  ws.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.t==='w'){myId=d.id;myH=d.h}
+    else if(d.t==='p'){
+      taken.clear();d.k.forEach(i=>taken.add(i));
+      const seen=new Set();board=[];
+      for(const [id,n,x,y,f,a,sc,h] of d.p){
+        board.push({id,n,sc});
+        if(id===myId)continue;seen.add(id);
+        let o=others.get(id);
+        if(!o){o={x,y};others.set(id,o)}
+        Object.assign(o,{tx:x,ty:y,f,a,n,h});
+      }
+      for(const id of others.keys())if(!seen.has(id))others.delete(id);
+      board.sort((a,b)=>b.sc-a.sc);
+    }
+  };
+}
+const send=o=>ws&&ws.readyState===1&&ws.send(JSON.stringify(o));
+
+const solid=(px,py)=>{const tx=Math.floor(px/T),ty=Math.floor(py/T);if(tx<0||tx>=MW)return true;if(ty<0||ty>=MH)return false;const ch=rows[ty][tx];return ch==='#'||ch==='='};
+const hit=()=>[me.x,me.x+me.w-.01].some(x=>[me.y,me.y+me.h/2,me.y+me.h-.01].some(y=>solid(x,y)));
+let coyote=0,jumpHeld=0;
+function step(){
+  const l=K.ArrowLeft||K.KeyA||TC.l,r=K.ArrowRight||K.KeyD||TC.r,j=K.ArrowUp||K.KeyW||K.Space||TC.j;
+  const ax=(r?1:0)-(l?1:0);
+  me.vx+=(ax*1.6-me.vx)*.25;if(ax)me.f=ax;
+  coyote=me.g?6:coyote-1;
+  if(j&&!jumpHeld&&coyote>0){me.vy=-5.8;coyote=0;me.g=false}
+  if(!j&&me.vy<-2)me.vy=-2;
+  jumpHeld=j?1:0;
+  me.vy=Math.min(me.vy+.3,7);
+  me.x+=me.vx;if(hit()){me.x-=me.vx;me.vx=0}
+  me.y+=me.vy;me.g=false;
+  if(hit()){
+    if(me.vy>0){me.y=Math.floor((me.y+me.h)/T)*T-me.h;me.g=true}
+    else me.y=(Math.floor(me.y/T)+1)*T;
+    me.vy=0;
+  }
+  me.a=!me.g?2:(Math.abs(me.vx)>.4?1:0);
+  if(me.y>MH*T+30){me.x=24;me.y=120;me.vx=me.vy=0}
+  coins.forEach((p,i)=>{
+    if(taken.has(i)||(sent[i]&&tick-sent[i]<30))return;
+    if(Math.abs(me.x+5-p[0])<10&&Math.abs(me.y+7-p[1])<12){sent[i]=tick;taken.add(i);send({t:'c',i})}
+  });
+  tick++;
+}
+
+const hsl=(h,s,l)=>`hsl(${h},${s}%,${l}%)`;
+function player(x,y,f,a,h,name,me_){
+  x=Math.round(x-cam);y=Math.round(y);
+  const leg=a===1?(tick>>3&1):0;
+  c.fillStyle='#1a1c2c';c.fillRect(x,y-1,10,15);
+  c.fillStyle=hsl(h,70,55);c.fillRect(x+1,y+5,8,6);
+  c.fillStyle='#f5d0a0';c.fillRect(x+1,y,8,6);
+  c.fillStyle=hsl(h,70,40);c.fillRect(x+1,y,8,2);
+  c.fillStyle='#1a1c2c';c.fillRect(x+(f>0?6:2),y+3,2,2);
+  c.fillStyle='#333c57';
+  if(a===2){c.fillRect(x+1,y+11,3,2);c.fillRect(x+6,y+10,3,2)}
+  else{c.fillRect(x+1,y+11,3,3-leg);c.fillRect(x+6,y+11,3,2+leg)}
+  c.font='bold 7px monospace';c.textAlign='center';
+  c.fillStyle='#000';c.fillText(name,x+6,y-3);c.fillStyle=me_?'#ffd23f':'#fff';c.fillText(name,x+5,y-4);
+}
+function draw(){
+  c.fillStyle='#4fa4e8';c.fillRect(0,0,W,H);
+  c.fillStyle='#73c2f0';c.fillRect(0,50,W,60);
+  c.fillStyle='#fff';
+  for(let i=0;i<8;i++){const x=((i*97-cam*.3)%(W+80)+W+80)%(W+80)-40,y=18+(i*29)%50;c.fillRect(x,y,28,6);c.fillRect(x+6,y-4,16,4)}
+  c.fillStyle='#3b7d4f';
+  for(let i=0;i<6;i++){const x=((i*83-cam*.5)%(W+120)+W+120)%(W+120)-60;c.fillRect(x,120,60,24);c.fillRect(x+10,112,40,8)}
+  const t0=Math.floor(cam/T);
+  for(let ty=0;ty<MH;ty++)for(let tx=t0;tx<=t0+W/T+1&&tx<MW;tx++){
+    const ch=rows[ty][tx],x=tx*T-Math.round(cam),y=ty*T;
+    if(ch==='#'){
+      c.fillStyle='#8b5a2b';c.fillRect(x,y,T,T);
+      c.fillStyle='#6e4520';c.fillRect(x+3,y+6,2,2);c.fillRect(x+10,y+11,2,2);
+      if(ty===0||rows[ty-1][tx]!=='#'){c.fillStyle='#38b764';c.fillRect(x,y,T,5);c.fillStyle='#257179';c.fillRect(x,y+5,T,1)}
+    }else if(ch==='='){
+      c.fillStyle='#b13e53';c.fillRect(x,y,T,T);c.fillStyle='#ef7d57';c.fillRect(x,y,T,2);
+      c.fillStyle='#5d275d';c.fillRect(x,y+7,T,1);c.fillRect(x+7,y,1,7);c.fillRect(x+3,y+8,1,8);c.fillRect(x+12,y+8,1,8);
+    }
+  }
+  coins.forEach((p,i)=>{
+    if(taken.has(i))return;
+    const w=2+Math.round(Math.abs(Math.sin((tick+i*7)/14))*4),x=Math.round(p[0]-cam);
+    c.fillStyle='#b8860b';c.fillRect(x-w/2-1,p[1]-5,w+2,10);
+    c.fillStyle='#ffd23f';c.fillRect(x-w/2,p[1]-4,w,8);
+  });
+  others.forEach(o=>{o.x+=(o.tx-o.x)*.3;o.y+=(o.ty-o.y)*.3;player(o.x,o.y,o.f,o.a,o.h,o.n,false)});
+  player(me.x,me.y,me.f,me.a,myH,nm.value||'Kamu',true);
+  c.font='bold 8px monospace';c.textAlign='left';
+  c.fillStyle='#000a';c.fillRect(0,0,W,12);
+  c.fillStyle=connected?'#38b764':'#e14c4c';c.fillRect(4,3,6,6);
+  const mine=board.find(b=>b.id===myId);
+  c.fillStyle='#fff';c.fillText(connected?'Koin '+(mine?mine.sc:0)+'  Online '+board.length:'Menyambung ulang…',14,9);
+  c.textAlign='right';
+  board.slice(0,4).forEach((b,i)=>{c.fillStyle=b.id===myId?'#ffd23f':'#fff';c.fillText((i+1)+'. '+b.n+' '+b.sc,W-4,22+i*9)});
+}
+function start(){
+  me={x:24,y:120,vx:0,vy:0,w:10,h:14,g:false,f:1,a:0};
+  let last=performance.now(),acc=0;
+  (function loop(n){
+    acc+=Math.min(100,n-last);last=n;
+    while(acc>=1000/60){step();acc-=1000/60}
+    cam+=(Math.max(0,Math.min(MW*T-W,me.x+5-W/2))-cam)*.12;
+    draw();requestAnimationFrame(loop);
+  })(last);
+  setInterval(()=>joined&&send({t:'s',x:Math.round(me.x),y:Math.round(me.y),f:me.f,a:me.a}),50);
+}
+nm.value=localStorage.getItem('pr_name')||'';
+go.onclick=()=>{try{localStorage.setItem('pr_name',nm.value)}catch(e){}joined=true;ov.style.display='none';send({t:'j',n:nm.value})};
+nm.addEventListener('keydown',e=>{if(e.key==='Enter')go.click()});
+fetch('level.json').then(r=>r.json()).then(j=>{rows=j.rows;coins=j.coins;MW=rows[0].length;MH=rows.length;connect();start()});
+</script></body></html>
