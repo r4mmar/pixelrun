@@ -1,0 +1,13 @@
+[Unit]
+Description=Pixel Run game server
+After=network.target
+
+[Service]
+User=pixelrun
+WorkingDirectory=/opt/pixelrun
+Environment=LEVEL=/var/www/pixelrun/level.json
+ExecStart=/usr/bin/node server.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

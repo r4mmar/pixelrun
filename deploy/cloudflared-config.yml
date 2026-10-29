@@ -1,0 +1,6 @@
+tunnel: GANTI_DENGAN_TUNNEL_ID
+credentials-file: /root/.cloudflared/GANTI_DENGAN_TUNNEL_ID.json
+ingress:
+  - hostname: game.domainanda.com
+    service: http://localhost:8081
+  - service: http_status:404
